@@ -120,7 +120,44 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter implements 
     }
 
     private void notifyWearables() {
+        if (mGoogleApiClient == null || !mGoogleApiClient.isConnected()) {
+            Log.e(LOG_TAG, "Not connected :(");
+            return;
+        }
 
+        String locationQuery = Utility.getPreferredLocation(getContext());
+        Uri weatherUri = WeatherContract.WeatherEntry.buildWeatherLocationWithDate(locationQuery, System.currentTimeMillis());
+        Cursor cursor = getContext().getContentResolver().query(weatherUri, NOTIFY_WEATHER_PROJECTION, null, null, null);
+        if (cursor.moveToFirst()) {
+
+            //Send data to wearable
+            Log.d(LOG_TAG, "Sending data to wearables...");
+            int weatherId = cursor.getInt(INDEX_WEATHER_ID);
+            String highTemp = Utility.formatTemperature(getContext(), cursor.getDouble(INDEX_MAX_TEMP));
+            String lowTemp = Utility.formatTemperature(getContext(), cursor.getDouble(INDEX_MIN_TEMP));
+            int iconId = Utility.getIconResourceForWeatherCondition(weatherId);
+
+            Bitmap iconBitmap = BitmapFactory.decodeResource(getContext().getResources(), iconId);
+
+            PutDataMapRequest mapRequest = PutDataMapRequest.create("/sunshine-temp-update");
+            mapRequest.getDataMap().putString("high-temp", highTemp);
+            mapRequest.getDataMap().putString("low-temp", lowTemp);
+            mapRequest.getDataMap().putAsset("icon", createAssetFromBitmap(iconBitmap));
+            //mapRequest.getDataMap().putLong("time", System.currentTimeMillis());
+
+            PutDataRequest request = mapRequest.asPutDataRequest();
+            Wearable.DataApi.putDataItem(mGoogleApiClient, request).setResultCallback(new ResultCallbacks<DataApi.DataItemResult>() {
+                @Override
+                public void onSuccess(DataApi.DataItemResult dataItemResult) {
+                    Log.d(LOG_TAG, "Success!");
+                }
+
+                @Override
+                public void onFailure(Status status) {
+                    Log.d(LOG_TAG, "Failure!");
+                }
+            });
+        }
     }
 
     @Override
