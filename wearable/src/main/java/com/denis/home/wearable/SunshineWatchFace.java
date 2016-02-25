@@ -28,6 +28,7 @@ import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.Typeface;
+import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
@@ -44,11 +45,16 @@ import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.api.GoogleApiClient;
 import com.google.android.gms.wearable.Asset;
 import com.google.android.gms.wearable.DataApi;
+import com.google.android.gms.wearable.DataEvent;
 import com.google.android.gms.wearable.DataEventBuffer;
+import com.google.android.gms.wearable.DataItem;
+import com.google.android.gms.wearable.DataMap;
+import com.google.android.gms.wearable.DataMapItem;
 import com.google.android.gms.wearable.Wearable;
 
 import java.io.InputStream;
 import java.lang.ref.WeakReference;
+import java.text.DateFormatSymbols;
 import java.util.TimeZone;
 import java.util.concurrent.TimeUnit;
 
@@ -104,8 +110,18 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
             GoogleApiClient.OnConnectionFailedListener {
         final Handler mUpdateTimeHandler = new EngineHandler(this);
         boolean mRegisteredTimeZoneReceiver = false;
+
+        Bitmap mIcon;
+
         Paint mBackgroundPaint;
         Paint mTextPaint;
+
+        Paint mTimePaint;
+        Paint mDatePaint;
+        Paint mIconPaint;
+        Paint mHighTempPaint;
+        Paint mLowTempPaint;
+
         boolean mAmbient;
         Time mTime;
         final BroadcastReceiver mTimeZoneReceiver = new BroadcastReceiver() {
@@ -120,6 +136,11 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
         float mXOffset;
         float mYOffset;
 
+        String[] mDayNames;
+        String[] mMonthNames;
+
+        String mLowTemp;
+        String mHighTemp;
         GoogleApiClient mGoogleApiClient;
 
         /**
@@ -139,15 +160,46 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
                     .setAcceptsTapEvents(true)
                     .build());
             Resources resources = SunshineWatchFace.this.getResources();
+            //mIcon = BitmapFactory.decodeResource(getResources(), R.mipmap.ic_launcher);
             mYOffset = resources.getDimension(R.dimen.digital_y_offset);
 
+            //Background
             mBackgroundPaint = new Paint();
             mBackgroundPaint.setColor(resources.getColor(R.color.background));
+
+            //Time
+            mTimePaint = new Paint();
+            mTimePaint.setColor(resources.getColor(R.color.digital_text_white));
+            mTimePaint.setTypeface(NORMAL_TYPEFACE);
+            mTimePaint.setAntiAlias(true);
+            //Date
+            mDatePaint = new Paint();
+            mDatePaint.setColor(resources.getColor(R.color.digital_text_light_blue));
+            mDatePaint.setTypeface(NORMAL_TYPEFACE);
+            mDatePaint.setAntiAlias(true);
+            //Icon
+            mIconPaint = new Paint();
+            //High Temp
+            mHighTempPaint = new Paint();
+            mHighTempPaint.setColor(resources.getColor(R.color.digital_text_white));
+            mHighTempPaint.setTypeface(NORMAL_TYPEFACE);
+            mHighTempPaint.setAntiAlias(true);
+            //Low Temp
+            mLowTempPaint = new Paint();
+            mLowTempPaint.setColor(resources.getColor(R.color.digital_text_light_blue));
+            mLowTempPaint.setTypeface(NORMAL_TYPEFACE);
+            mLowTempPaint.setAntiAlias(true);
 
             mTextPaint = new Paint();
             mTextPaint = createTextPaint(resources.getColor(R.color.digital_text));
 
+            //Get current time
             mTime = new Time();
+
+            //Get day and month names
+            DateFormatSymbols symbols = new DateFormatSymbols();
+            mDayNames = symbols.getShortWeekdays();
+            mMonthNames = symbols.getShortMonths();
 
             // Connetct to the wearable api
             mGoogleApiClient = new GoogleApiClient.Builder(SunshineWatchFace.this)
@@ -219,8 +271,18 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
                     ? R.dimen.digital_x_offset_round : R.dimen.digital_x_offset);
             float textSize = resources.getDimension(isRound
                     ? R.dimen.digital_text_size_round : R.dimen.digital_text_size);
+            float timeTextSize = resources.getDimension(isRound
+                    ? R.dimen.digital_time_text_size_round : R.dimen.digital_time_text_size);
+            float dateTextSize = resources.getDimension(isRound
+                    ? R.dimen.digital_date_text_size_round : R.dimen.digital_date_text_size);
+            float tempTextSize = resources.getDimension(isRound
+                    ? R.dimen.digital_temp_text_size_round : R.dimen.digital_temp_text_size);
 
             mTextPaint.setTextSize(textSize);
+            mTimePaint.setTextSize(timeTextSize);
+            mDatePaint.setTextSize(dateTextSize);
+            mHighTempPaint.setTextSize(tempTextSize);
+            mLowTempPaint.setTextSize(tempTextSize);
         }
 
         @Override
@@ -242,6 +304,7 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
                 mAmbient = inAmbientMode;
                 if (mLowBitAmbient) {
                     mTextPaint.setAntiAlias(!inAmbientMode);
+                    mTimePaint.setAntiAlias(!inAmbientMode);
                 }
                 invalidate();
             }
@@ -253,6 +316,7 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
 
         @Override
         public void onDraw(Canvas canvas, Rect bounds) {
+
             // Draw the background.
             if (isInAmbientMode()) {
                 canvas.drawColor(Color.BLACK);
@@ -260,12 +324,54 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
                 canvas.drawRect(0, 0, bounds.width(), bounds.height(), mBackgroundPaint);
             }
 
+            // Get center
+            float centerX = bounds.centerX();
+            float centerY = bounds.centerY();
+
+            // Set time
             // Draw H:MM in ambient mode or H:MM:SS in interactive mode.
-            mTime.setToNow();
+            mTime.setToNow();/*
             String text = mAmbient
                     ? String.format("%d:%02d", mTime.hour, mTime.minute)
                     : String.format("%d:%02d:%02d", mTime.hour, mTime.minute, mTime.second);
-            canvas.drawText(text, mXOffset, mYOffset, mTextPaint);
+            canvas.drawText(text, mXOffset, mYOffset, mTextPaint);*/
+
+            // Draw HH:MM
+            //String timeText = String.format("%02d:%02d", mTime.hour, mTime.minute);
+            String timeText = mAmbient
+                    ? String.format("%02d:%02d", mTime.hour, mTime.minute)
+                    //: String.format("%2d:%02d:%02d", mTime.hour, mTime.minute, mTime.second);
+                    : String.format("%02d:%02d", mTime.hour, mTime.minute);
+            float timeTextSize = mTimePaint.measureText(timeText);
+            canvas.drawText(timeText, centerX - timeTextSize/2, mYOffset, mTimePaint);
+
+            //Day SHORT-WEEKDAY, SHORT-MONTH DAY YEAR
+            String dateText = String.format(
+                    "%s, %s %d %d",
+                    mDayNames[mTime.weekDay],
+                    mMonthNames[mTime.month],
+                    mTime.monthDay,
+                    mTime.year
+            );
+            float dateTextSize = mDatePaint.measureText(dateText);
+            float dateYOffset = mYOffset + getResources().getDimension(R.dimen.digital_time_text_margin_bottom);
+            canvas.drawText(dateText.toUpperCase(), centerX - dateTextSize/2, dateYOffset, mDatePaint);
+
+            float tempYOffset = dateYOffset + getResources().getDimension(R.dimen.digital_date_text_margin_bottom);
+            //canvas.drawBitmap(mIcon, centerX - mIcon.getWidth() - mIcon.getWidth()/4, tempYOffset - mIcon.getHeight() / 2, mIconPaint);
+            //Draw Icon and Temperatures
+            if (mHighTemp != null && mLowTemp != null) {
+                //float tempYOffset = dateYOffset + getResources().getDimension(R.dimen.digital_date_text_margin_bottom);
+                //Icon
+                if(mIcon != null && !mLowBitAmbient)
+                    canvas.drawBitmap(mIcon, centerX - mIcon.getWidth() - mIcon.getWidth()/4, tempYOffset - mIcon.getHeight() / 2, mIconPaint);
+                //High temp
+                canvas.drawText(mHighTemp, centerX, tempYOffset, mHighTempPaint);
+                //Low temp
+                float highTempSize = mHighTempPaint.measureText(mHighTemp);
+                float highTempRightMargin = getResources().getDimension(R.dimen.digital_temp_text_margin_right);
+                canvas.drawText(mLowTemp, centerX + highTempSize + highTempRightMargin, tempYOffset, mLowTempPaint);
+            }
         }
 
         /**
@@ -324,7 +430,21 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
          */
         @Override
         public void onDataChanged(DataEventBuffer dataEventBuffer) {
+            Log.d(LOG_TAG, "New data received");
 
+            for (DataEvent event : dataEventBuffer) {
+                if (event.getType() == DataEvent.TYPE_CHANGED) {
+                    DataItem item = event.getDataItem();
+                    if (item.getUri().getPath().compareTo("/sunshine-temp-update") == 0) {
+                        DataMap dataMap = DataMapItem.fromDataItem(item).getDataMap();
+                        mHighTemp = dataMap.getString("high-temp");
+                        mLowTemp = dataMap.getString("low-temp");
+                        new GetBitmapForWeatherTask().execute(dataMap.getAsset("icon"));
+
+                        invalidate();
+                    }
+                }
+            }
         }
 
         public Bitmap loadBitmapFromAsset(Asset asset) {
@@ -347,6 +467,21 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
             }
             // decode the stream into a bitmap
             return BitmapFactory.decodeStream(assetInputStream);
+        }
+
+        public class GetBitmapForWeatherTask extends AsyncTask<Asset, Void, Void> {
+
+            @Override
+            protected Void doInBackground(Asset... assets) {
+                Asset asset = assets[0];
+                mIcon = loadBitmapFromAsset(asset);
+
+                int size = Double.valueOf(SunshineWatchFace.this.getResources().getDimension(R.dimen.digital_icon_size)).intValue();
+                mIcon = Bitmap.createScaledBitmap(mIcon, size, size, false);
+                postInvalidate();
+
+                return null;
+            }
         }
     }
 }

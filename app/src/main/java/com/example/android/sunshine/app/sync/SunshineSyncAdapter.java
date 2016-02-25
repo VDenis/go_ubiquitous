@@ -139,11 +139,12 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter implements 
 
             Bitmap iconBitmap = BitmapFactory.decodeResource(getContext().getResources(), iconId);
 
+            //PutDataMapRequest mapRequest = PutDataMapRequest.create("/sunshine-temp-update").setUrgent();
             PutDataMapRequest mapRequest = PutDataMapRequest.create("/sunshine-temp-update");
             mapRequest.getDataMap().putString("high-temp", highTemp);
             mapRequest.getDataMap().putString("low-temp", lowTemp);
             mapRequest.getDataMap().putAsset("icon", createAssetFromBitmap(iconBitmap));
-            //mapRequest.getDataMap().putLong("time", System.currentTimeMillis());
+            mapRequest.getDataMap().putLong("time", System.currentTimeMillis());
 
             PutDataRequest request = mapRequest.asPutDataRequest();
             Wearable.DataApi.putDataItem(mGoogleApiClient, request).setResultCallback(new ResultCallbacks<DataApi.DataItemResult>() {
